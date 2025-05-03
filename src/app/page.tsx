@@ -1,14 +1,28 @@
 "use client";
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Toolbar } from '@/components/toolbar';
 import { Canvas } from '@/components/canvas';
 import type { Shape, Tool } from '@/types/shapes';
 
+const DEFAULT_FILL = 'transparent';
+const DEFAULT_STROKE = 'hsl(var(--foreground))'; // Use theme foreground
+const DEFAULT_STROKE_WIDTH = 2;
+
 export default function Home() {
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [shapes, setShapes] = useState<Shape[]>([]);
+  const [fillColor, setFillColor] = useState(DEFAULT_FILL);
+  const [strokeColor, setStrokeColor] = useState(DEFAULT_STROKE);
+  const [strokeWidth, setStrokeWidth] = useState(DEFAULT_STROKE_WIDTH);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Update stroke color default based on theme change (basic example)
+  useEffect(() => {
+    // This is a simplified way; MutationObserver on body class might be more robust
+    const isDark = document.documentElement.classList.contains('dark');
+    setStrokeColor(isDark ? 'hsl(0 0% 98%)' : 'hsl(240 10% 3.9%)');
+  }, []); // Runs once on mount
 
   const handleExportSVG = () => {
     const svgElement = svgRef.current;
@@ -52,6 +66,12 @@ export default function Home() {
        <Toolbar
         activeTool={activeTool}
         setActiveTool={setActiveTool}
+        fillColor={fillColor}
+        setFillColor={setFillColor}
+        strokeColor={strokeColor}
+        setStrokeColor={setStrokeColor}
+        strokeWidth={strokeWidth}
+        setStrokeWidth={setStrokeWidth} // Pass down later
         onExport={handleExportSVG}
       />
       <div className="flex-grow p-4 pt-20"> {/* Add padding top to avoid overlap with toolbar */}
@@ -59,6 +79,9 @@ export default function Home() {
           activeTool={activeTool}
           shapes={shapes}
           setShapes={setShapes}
+          fillColor={fillColor}
+          strokeColor={strokeColor}
+          strokeWidth={strokeWidth}
           svgRef={svgRef}
         />
       </div>

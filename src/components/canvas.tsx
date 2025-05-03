@@ -1,20 +1,27 @@
 "use client";
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import type { Shape, Tool, Point, DrawingState, RectangleShape, CircleShape } from '@/types/shapes';
+import type { Shape, Tool, Point, DrawingState, RectangleShape, CircleShape, LineShape, PathShape } from '@/types/shapes';
 
 interface CanvasProps {
   activeTool: Tool;
   shapes: Shape[];
   setShapes: React.Dispatch<React.SetStateAction<Shape[]>>;
+  fillColor: string;
+  strokeColor: string;
+  strokeWidth: number;
   svgRef: React.RefObject<SVGSVGElement>;
 }
 
-const DEFAULT_FILL = 'transparent';
-const DEFAULT_STROKE = 'hsl(var(--foreground))'; // Use theme foreground
-const DEFAULT_STROKE_WIDTH = 2;
-
-export function Canvas({ activeTool, shapes, setShapes, svgRef }: CanvasProps) {
+export function Canvas({
+  activeTool,
+  shapes,
+  setShapes,
+  fillColor,
+  strokeColor,
+  strokeWidth,
+  svgRef
+}: CanvasProps) {
   const [drawingState, setDrawingState] = useState<DrawingState | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 }); // Initial size
 
@@ -32,31 +39,53 @@ export function Canvas({ activeTool, shapes, setShapes, svgRef }: CanvasProps) {
     if (activeTool === 'select') return; // Handle selection later
 
     const { x, y } = getMousePosition(event);
-    setDrawingState({
+    const newDrawingState: DrawingState = {
       type: activeTool,
       startX: x,
       startY: y,
       currentX: x,
       currentY: y,
       options: {
-        fill: DEFAULT_FILL,
-        stroke: DEFAULT_STROKE,
-        strokeWidth: DEFAULT_STROKE_WIDTH,
+        fill: fillColor,
+        stroke: strokeColor,
+        strokeWidth: strokeWidth,
       },
-    });
-  }, [activeTool, svgRef]);
+    };
+    if (activeTool === 'pen') {
+        newDrawingState.points = [{ x, y }];
+    }
+    setDrawingState(newDrawingState);
+  }, [activeTool, svgRef, fillColor, strokeColor, strokeWidth]);
 
   const handleMouseMove = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
     if (!drawingState || activeTool === 'select') return;
 
     const { x, y } = getMousePosition(event);
-    setDrawingState(prev => prev ? { ...prev, currentX: x, currentY: y } : null);
+     if (activeTool === 'pen' && drawingState.points) {
+        setDrawingState(prev => prev ? {
+            ...prev,
+            currentX: x,
+            currentY: y,
+            points: [...(prev.points || []), { x, y }] // Add new point for pen tool
+        } : null);
+    } else {
+        setDrawingState(prev => prev ? { ...prev, currentX: x, currentY: y } : null);
+    }
   }, [drawingState, activeTool, svgRef]);
+
+  // Convert points array to SVG path data string
+  const pointsToPathData = (points: Point[]): string => {
+    if (!points || points.length === 0) return "";
+    const start = `M ${points[0].x} ${points[0].y}`;
+    const lines = points.slice(1).map(p => `L ${p.x} ${p.y}`).join(" ");
+    return `${start} ${lines}`;
+  };
+
 
   const handleMouseUp = useCallback(() => {
     if (!drawingState || activeTool === 'select') return;
 
-    const { type, startX, startY, currentX, currentY, options } = drawingState;
+    const { type, startX, startY, currentX, currentY, points, options } = drawingState;
     const id = `shape-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
     let newShape: Shape | null = null;
@@ -71,11 +100,12 @@ export function Canvas({ activeTool, shapes, setShapes, svgRef }: CanvasProps) {
           width: Math.abs(currentX - startX),
           height: Math.abs(currentY - startY),
           ...options,
-        };
+        } as RectangleShape;
         break;
       case 'circle':
         const dx = currentX - startX;
         const dy = currentY - startY;
+        // Use distance from start to current as radius
         const radius = Math.sqrt(dx * dx + dy * dy);
         newShape = {
           id,
@@ -84,20 +114,44 @@ export function Canvas({ activeTool, shapes, setShapes, svgRef }: CanvasProps) {
           y: startY, // Center y
           radius,
           ...options,
-        };
+        } as CircleShape;
         break;
-      case 'line':
-      // Implement Line shape creation later
+       case 'line':
+         // Only add line if it has length
+         if (startX !== currentX || startY !== currentY) {
+           newShape = {
+             id,
+             type: 'line',
+             x1: startX,
+             y1: startY,
+             x2: currentX,
+             y2: currentY,
+             ...options,
+           } as LineShape;
+         }
+        break;
       case 'pen':
-      // Implement Pen/Path shape creation later
+        if (points && points.length > 1) {
+            newShape = {
+                id,
+                type: 'pen',
+                points: points,
+                ...options,
+                // Fill is typically none for pen paths unless explicitly set otherwise later
+                fill: 'none',
+            } as PathShape;
+        }
+        break;
       default:
         break;
     }
 
     if (newShape) {
-        // Only add shape if it has non-zero dimensions (or radius for circle)
-        if ((newShape.type === 'rectangle' && (newShape.width > 0 || newShape.height > 0)) ||
-            (newShape.type === 'circle' && newShape.radius > 0)) {
+        // Add validation for minimal size/length if needed
+        if ((newShape.type === 'rectangle' && (newShape.width > 1 || newShape.height > 1)) ||
+            (newShape.type === 'circle' && newShape.radius > 1) ||
+            (newShape.type === 'line' && (newShape.x1 !== newShape.x2 || newShape.y1 !== newShape.y2)) ||
+            (newShape.type === 'pen' && newShape.points.length > 1)) {
             setShapes(prev => [...prev, newShape as Shape]);
         }
     }
@@ -110,19 +164,33 @@ export function Canvas({ activeTool, shapes, setShapes, svgRef }: CanvasProps) {
     const handleResize = () => {
       const parent = svgRef.current?.parentElement;
       if (parent) {
-        setCanvasSize({ width: parent.clientWidth, height: parent.clientHeight });
+        // Ensure non-zero dimensions for viewBox
+        const newWidth = Math.max(1, parent.clientWidth);
+        const newHeight = Math.max(1, parent.clientHeight);
+        setCanvasSize({ width: newWidth, height: newHeight });
       }
     };
+
+    // Debounce resize handler
+    let resizeTimeout: NodeJS.Timeout;
+    const debouncedHandleResize = () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(handleResize, 50); // Adjust delay as needed
+    };
+
     handleResize(); // Initial size
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [svgRef]);
+    window.addEventListener('resize', debouncedHandleResize);
+    return () => {
+        clearTimeout(resizeTimeout);
+        window.removeEventListener('resize', debouncedHandleResize);
+    }
+   }, [svgRef]);
 
   // Render temporary shape during drawing
   const renderTemporaryShape = () => {
     if (!drawingState || activeTool === 'select') return null;
 
-    const { type, startX, startY, currentX, currentY, options } = drawingState;
+    const { type, startX, startY, currentX, currentY, points, options } = drawingState;
 
     switch (type) {
       case 'rectangle':
@@ -165,7 +233,20 @@ export function Canvas({ activeTool, shapes, setShapes, svgRef }: CanvasProps) {
                  strokeDasharray="5 5"
                />
              );
-      // Add cases for other tools later
+        case 'pen':
+            if (!points || points.length < 1) return null;
+             // Render the path being drawn
+             return (
+                <path
+                    d={pointsToPathData(points)}
+                    fill="none" // Pen tool typically doesn't fill during drawing
+                    stroke={options.stroke}
+                    strokeWidth={options.strokeWidth}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeDasharray="5 5"
+                 />
+             );
       default:
         return null;
     }
@@ -183,6 +264,19 @@ export function Canvas({ activeTool, shapes, setShapes, svgRef }: CanvasProps) {
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp} // End drawing if mouse leaves canvas
     >
+       {/* Optional Grid */}
+       <defs>
+         <pattern id="smallGrid" width="10" height="10" patternUnits="userSpaceOnUse">
+           <path d="M 10 0 L 0 0 0 10" fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="0.5" opacity="0.5"/>
+         </pattern>
+         <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse">
+           <rect width="100" height="100" fill="url(#smallGrid)"/>
+           <path d="M 100 0 L 0 0 0 100" fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1" opacity="0.5"/>
+         </pattern>
+       </defs>
+       <rect width="100%" height="100%" fill="url(#grid)" pointerEvents="none" />
+
+
       {/* Render saved shapes */}
       {shapes.map((shape) => {
         switch (shape.type) {
@@ -215,26 +309,40 @@ export function Canvas({ activeTool, shapes, setShapes, svgRef }: CanvasProps) {
                 transform={shape.rotation ? `rotate(${shape.rotation} ${shape.x} ${shape.y})` : undefined}
               />
             );
-          // Add cases for other shapes later
+          case 'line':
+              return (
+                  <line
+                      key={shape.id}
+                      x1={shape.x1}
+                      y1={shape.y1}
+                      x2={shape.x2}
+                      y2={shape.y2}
+                      stroke={shape.stroke}
+                      strokeWidth={shape.strokeWidth}
+                      strokeLinecap="round" // Optional: for smoother line ends
+                  />
+              );
+            case 'pen':
+                 return (
+                     <path
+                         key={shape.id}
+                         d={pointsToPathData(shape.points)}
+                         fill={shape.fill} // Usually 'none' for paths unless intended
+                         stroke={shape.stroke}
+                         strokeWidth={shape.strokeWidth}
+                         strokeLinecap="round"
+                         strokeLinejoin="round"
+                     />
+                 );
           default:
+            // Ensure Exhaustive Check (useful with TypeScript)
+            // const _exhaustiveCheck: never = shape;
             return null;
         }
       })}
 
       {/* Render temporary drawing shape */}
       {renderTemporaryShape()}
-
-       {/* Optional Grid */}
-       {/* <defs>
-         <pattern id="smallGrid" width="10" height="10" patternUnits="userSpaceOnUse">
-           <path d="M 10 0 L 0 0 0 10" fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="0.5"/>
-         </pattern>
-         <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse">
-           <rect width="100" height="100" fill="url(#smallGrid)"/>
-           <path d="M 100 0 L 0 0 0 100" fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1"/>
-         </pattern>
-       </defs>
-       <rect width="100%" height="100%" fill="url(#grid)" /> */}
 
     </svg>
   );

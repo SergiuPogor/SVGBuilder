@@ -8,8 +8,6 @@ export interface Point {
 export interface ShapeBase {
   id: string;
   type: Tool;
-  x: number;
-  y: number;
   fill: string;
   stroke: string;
   strokeWidth: number;
@@ -18,6 +16,8 @@ export interface ShapeBase {
 
 export interface RectangleShape extends ShapeBase {
   type: 'rectangle';
+  x: number;
+  y: number;
   width: number;
   height: number;
   rx?: number; // Optional border radius x
@@ -26,12 +26,29 @@ export interface RectangleShape extends ShapeBase {
 
 export interface CircleShape extends ShapeBase {
   type: 'circle';
+  x: number; // Center x
+  y: number; // Center y
   radius: number;
 }
 
-// Add interfaces for Line, Path, Text later as needed
+export interface LineShape extends ShapeBase {
+    type: 'line';
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+}
 
-export type Shape = RectangleShape | CircleShape; // Add other shapes here later
+export interface PathShape extends ShapeBase {
+    type: 'pen';
+    points: Point[]; // Array of points defining the path
+    // SVG path data 'd' will be generated from points
+}
+
+
+// Add interfaces for Text later as needed
+
+export type Shape = RectangleShape | CircleShape | LineShape | PathShape; // Add other shapes here later
 
 // Interface for the current drawing action state
 export interface DrawingState {
@@ -40,6 +57,7 @@ export interface DrawingState {
   startY: number;
   currentX: number;
   currentY: number;
+  points?: Point[]; // Used for pen tool
   options: {
     fill: string;
     stroke: string;
